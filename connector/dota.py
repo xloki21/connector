@@ -1,17 +1,15 @@
-import glob
 import os
-import os.path as path
+import glob
 from collections import OrderedDict
 
-import pandas as pd
 import tqdm
+import pandas as pd
 
 from connector.generic import LocalisationDatasetConnector
 from connector.tools.imaging import pil_to_nparray, imread_full
 
 
-class DotaDatasetConnector(LocalisationDatasetConnector):
-
+class DOTADatasetConnector(LocalisationDatasetConnector):
     def __init__(self, dataframe):
         super().__init__(dataframe)
         self.name = 'DOTA'
@@ -24,8 +22,8 @@ class DotaDatasetConnector(LocalisationDatasetConnector):
     def connect(cls, imagedir, labeldir, rebuild_index=False):
         """
         Создать коннектор для датасета.
-        :param image_dir: Директория, в которой хранятся изображения
-        :param label_dir: Директория, в которой хранится файл с аннотированными данными.
+        :param imagedir: Директория, в которой хранятся изображения
+        :param labeldir: Директория, в которой хранится файл с аннотированными данными.
         :param rebuild_index: Принудительная перестройка индекса.
         :return: Объект-коннектор для формирования подвыборок данных.
         """
@@ -34,7 +32,7 @@ class DotaDatasetConnector(LocalisationDatasetConnector):
         pandas_sharded_dataframe = glob.glob(labeldir + '/*.shard', recursive=True)
 
         if len(pandas_sharded_dataframe) == 0 or rebuild_index:
-            pandas_sharded_dataframe = path.join(labeldir, 'dataframe.{index:06}.shard')
+            pandas_sharded_dataframe = os.path.join(labeldir, 'dataframe.{index:06}.shard')
             print('log: Набор Файлов с индексом в формате Pandas не найден. Индекс будет перестроен.')
             imfile_list = []
             for mask in ["txt"]:
@@ -57,7 +55,7 @@ class DotaDatasetConnector(LocalisationDatasetConnector):
                 data = pd.read_csv(file, delimiter=' ',
                                    header=1,  # Этот ключ необходим. Zero-based индекс хедера для данных.
                                    names=['x1', 'y1', 'x2', 'y2', 'x3', 'y3', 'x4', 'y4', 'label', 'tag'])
-                data["image"] = path.join(imagedir, name + '.png')
+                data["image"] = os.path.join(imagedir, name + '.png')
                 data["x"] = data[['x1', 'x2', 'x3', 'x4']].values.tolist()
                 data["y"] = data[['y1', 'y2', 'y3', 'y4']].values.tolist()
                 data.drop(columns=['x1', 'x2', 'x3', 'x4', 'y1', 'y2', 'y3', 'y4'], inplace=True)

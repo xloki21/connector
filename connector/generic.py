@@ -24,19 +24,14 @@ class BaseDatasetConnector(ABC):
         # self._worker_pool.close()
 
 
-class LocalisationDatasetConnector(BaseDatasetConnector):
-    def __init__(self, dataframe):
-        super().__init__()
+class DataFrameCommonOpsMixin:
+    """Mixin: Common ops and properties.
+    """
+    def __init__(self, dataframe=None):
         self._df = dataframe
-
-    def __str__(self):
-        labels_info = "Dataset with {n} label(s): {labels}".format(n=len(self.labels), labels=self.labels)
-        images_info = "Number of images: {n}".format(n=len(self.images))
-        return "\n".join([labels_info, images_info])
 
     def __add__(self, connector):
         _df = self._df.append(connector.df.copy())
-
         return self.init(dataframe=_df)
 
     def __len__(self):
@@ -49,6 +44,35 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
     @property
     def size(self):
         return len(self._df)
+
+    @classmethod
+    @abstractmethod
+    def init(cls, dataframe=None):
+        return cls(dataframe=dataframe)
+
+    @abstractmethod
+    def _calculate_statistics(self):
+        raise NotImplemented()
+
+    def describe(self, filename: str = None):
+        info = self._calculate_statistics()
+
+        if filename:
+            info.to_csv(filename, sep='\t', float_format='%.2f')
+        else:
+            print(info)
+            print('Выбрано: {total} объектов'.format(total=self.size))
+        return info
+
+
+class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
+    def __init__(self, dataframe):
+        super().__init__(dataframe=dataframe)
+
+    def __str__(self):
+        labels_info = "Dataset with {n} label(s): {labels}".format(n=len(self.labels), labels=self.labels)
+        images_info = "Number of images: {n}".format(n=len(self.images))
+        return "\n".join([labels_info, images_info])
 
     @property
     def images(self):
@@ -109,11 +133,6 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
 
     @classmethod
     @abstractmethod
-    def init(cls, dataframe=None):
-        return cls(dataframe=dataframe)
-
-    @classmethod
-    @abstractmethod
     def connect(cls, image_dir, label_dir):
         raise NotImplementedError('Not implemented')
 
@@ -138,7 +157,7 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
         return self.init(dataframe=self.df.loc[idx])
 
     def select_objects(self, width=None, height=None):
-        df = self.df.copy()  # ?
+        df = self.df.copy()
 
         if width:
             w = df.x.apply(lambda x: max(x)) - df.x.apply(lambda x: min(x))
@@ -286,18 +305,7 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
             info.loc[label, 'height'] = h_stats
         return info
 
-    def describe(self, filename: str = None):
-        info = self._calculate_statistics()
-
-        if filename:
-            info.to_csv(filename, sep='\t', float_format='%.2f')
-        else:
-            print(info)
-            print('Выбрано: {total} объектов'.format(total=self.size))
-        return info
-
     def calculate_stat_coeffs(self, n_bootsrap=10, sample_size=20, filename=None):
-        # todo: only rgb-images supported. Need to generalize
         def worker_fn(filenames):
             means = np.zeros((len(filenames), 3), dtype=np.float32)
             stds = np.zeros((len(filenames), 3), dtype=np.float32)
@@ -336,7 +344,6 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
             plt.show()
 
     def save(self, folder, shard_size):
-
         os.makedirs(folder, exist_ok=True)
         n_entries = self.size
 
@@ -381,34 +388,10 @@ class LocalisationDatasetConnector(BaseDatasetConnector):
 
         return cls(dataframe=_df)
 
-    def torch_interface(self):
-        try:
-            from connector.ctorch import TorchConnector
-        except:
-            raise ModuleNotFoundError('pytorch not found')
-        return TorchConnector(dataframe=self.df, transforms_compose=None)
 
-
-class ChangeDetectionDatasetConnector(BaseDatasetConnector):
+class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
     def __init__(self, dataframe):
-        super().__init__()
-        self._df = dataframe
-
-    def __len__(self):
-        return len(self._df)
-
-    def __add__(self, connector):
-        _df = self._df.append(connector.df.copy())
-
-        return self.init(dataframe=_df)
-
-    @property
-    def df(self):
-        return self._df
-
-    @property
-    def size(self):
-        return len(self._df)
+        super().__init__(dataframe=dataframe)
 
     @property
     def image0(self):
@@ -430,11 +413,6 @@ class ChangeDetectionDatasetConnector(BaseDatasetConnector):
     @abstractmethod
     def connect(cls, root_dir, filename):
         raise NotImplementedError('Not implemented')
-
-    @classmethod
-    @abstractmethod
-    def init(cls, dataframe=None):
-        return cls(dataframe=dataframe)
 
     @abstractmethod
     def collate_fn(self, data):
@@ -525,13 +503,3 @@ class ChangeDetectionDatasetConnector(BaseDatasetConnector):
             info.loc[series.iloc[0]["cluster"], group] = [len(series), np.sum(changed)]
 
         return info.dropna()
-
-    def describe(self, filename: str = None):
-        info = self._calculate_statistics()
-
-        if filename:
-            info.to_csv(filename, sep='\t', float_format='%.2f')
-        else:
-            print(info)
-            print('Выбрано: {total} объектов'.format(total=self.size))
-        return info

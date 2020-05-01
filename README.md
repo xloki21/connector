@@ -2,7 +2,7 @@
 
 Коннектор может быть использован для подключения к датасетам, предназначенным для:
 - задачи локализации (на данный момент реализовано полнофункциональное подключение
-к датасетам в форматах Dota и PASCALVOC. В тестовом режиме работает подключение к датасету Onera);
+к датасетам в форматах DOTA и PASCALVOC);
 - задачи поиска структурных изменений на разновременных изображениях (на данный момент реализован базовый
 функционал к датасету в формате CD2014).
 
@@ -26,84 +26,87 @@
 #### 2. Пример. Подключение к датасету в формате Dota
 
 ```python
-import os.path as path
+import os
 import matplotlib.pyplot as plt
 
-from connector.dota import DotaDatasetConnector
+from connector.dota import DOTADatasetConnector
 
-# Указываем путь до данных на файловом ресурсе
-root_dir = '//f125.sils.local/doc/PROJECTS/ML/Data/Dota/train'
-conn = DotaDatasetConnector.connect(imagedir=path.join(root_dir, 'images'),
-                                    labeldir=path.join(root_dir, 'labelTxt'))
+root_dir = r'/path/to/dataset/dota/train'
 
-# Указываем критерии формирования среза данных
-# 1. Выбрать объекты класса ['plane', 'roundabout', 'storage-tank']
-# 2. Выбрать объекты размерами больше 10px по ширине и высоте
+# connector: connect to source dataset
+conn = DOTADatasetConnector.connect(imagedir=os.path.join(root_dir, 'images'),
+                                    labeldir=os.path.join(root_dir, 'labelTxt'))
 
+# select custom label set
 labels = ['plane', 'roundabout', 'storage-tank']
-data = conn.select_labels(labels=labels).select_objects_with_size(wlim=(10, None), hlim=(10, None))
+selected_labels = conn.select_labels(labels=labels)
 
-# Выводим в консоль описательную статистику для среза данных 
-data.describe(filename=None)
+# select objects with width in (10, 300)px and height in (10, 300)px. 
+selected_objects = selected_labels.select_objects(width=(10, 300), height=(10, 300))
 
-# Наносим разметку на изображение P0178.png и визуализируем результат
-result = data.draw_image_annotation(image_idx='P0178.png')
+# show dataset annotation info (or save it to filename)
+selected_objects.describe(filename=None)
 
-plt.imshow(result)
-plt.show()
+# draw annotation of 'P0178.png' in custom dataset slice.
+image_with_annotation = selected_objects.draw_image_annotation(image_file='/path/to/dataset/dota/train/images/P0178.png')
+plt.imsave('dota.jpg', image_with_annotation)
 ```
-![img](doc/dota.png)
+![img](doc/dota.jpg)
 
 #### 3. Пример. Подключение к датасету в формате PASCAL VOC.
 
 ```python
 from connector.pascalvoc import PASCALVOCDatasetConnector
 
-# Указываем путь до данных на файловом ресурсе
-root_dir = '//f125.sils.local/doc/PROJECTS/ML/Data/bpla/20190809'
-new_dataset_dir = '//f125.sils.local/doc/PROJECTS/ML/Data/bpla/20190809/custom'
+# connector: connect to source dataset
+root_dir = '/path/to/dataset/pascalvoc-like'
+new_dataset_dir = '/path/to/dataset/pascalvoc-like/custom'
 conn = PASCALVOCDatasetConnector.connect(imagedir=root_dir,
                                          labeldir=root_dir)
 
-# Указываем критерии формирования среза данных
+# select custom label set
+# select objects with width in (10, 300)px and height in (10, 300)px. 
+labels = ['class 1', 'class 2']
+data = conn.select_labels(labels=labels).select_objects(width=(10, 300), height=(10, 300))
 
-labels = ['building materials', 'pole']
-data = conn.select_labels(labels=labels).select_objects_with_size(wlim=(10, None), hlim=(10, None))
-
-# Выводим в консоль описательную статистику для среза данных 
+# show dataset annotation info (or save it to filename) 
 data.describe(filename=None)
 
-# Нарезаем датасет на изображения размерами (512х512), и сохраняем их в директорию new_dataset_dir
+# convert selected data with sliding window patches of shape (512х512) and overlapped with 0.5 x (height, widht)
+# save new data to 'new_dataset_dir'
 data.convert(roi_shape=(512, 512), imagedir=new_dataset_dir, labeldir=new_dataset_dir, rel_shift=0.5)
 
-# Подключаемся к сконвертированному датасету
+# connector: connect to new dataset
 converted_dataset = PASCALVOCDatasetConnector.connect(imagedir=new_dataset_dir, labeldir=new_dataset_dir)
 
-# Вычисляем описательные статистики методом бутстрапа и сохраняем в файл ./stat.coeffs
+# calculate dataset mean and std values
 converted_dataset.calculate_stat_coeffs(n_bootstrap=100, filename="stat.coeffs")
 
-# Конвертируем данные в формат COCO(json-like) и сохраняем в файл ./coco_format.json.
+# convert annotation into COCO(json-like) format and save to jsonfile.
 converted_dataset.create_coco_format_annotation(jsonfile="coco_format.json")
 
 ```
 #### 4. Пример. Подключение к датасету CD2014.
-
 ```python
 import os.path as path
 from connector.cd2014 import CDDatasetConnector
 
-root_dir = '//f125.sils.local/doc/PROJECTS/ML/Data/change_detection/cd2014'
+# connector: connect to  dataset
+root_dir = '/path/to/dataset/cd2014'
 conn = CDDatasetConnector.connect(root_dir=root_dir,
                                   filename=path.join(root_dir, "train.txt"))
 
+# select some clusters
 cluster_video = ["PTZ", "nightVideos", "cameraJitter"]
 data1 = conn.select_cluster(cluster_video)
 
+# select custom group
 group_video = ["skating"]
 data2 = conn.select_group(group_video)
 
 data = data1 + data2
 
+# describe dataset
 data.describe()
 
 print(data.calculate_stat_coeffs(n_bootsrap=100))

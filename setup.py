@@ -9,5 +9,5 @@ setup(name='connector',
       author_email=['karmanoval@sils.local', 'teplykhna@sils.local'],
       license='VNIITF',
       packages=['connector'],
-      setup_requires=['matplotlib', 'pandas', 'tqdm'],
+      setup_requires=['matplotlib', 'pandas', 'tqdm', 'numpy'],
       zip_safe=False)
