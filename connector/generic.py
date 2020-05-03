@@ -27,6 +27,7 @@ class BaseDatasetConnector(ABC):
 class DataFrameCommonOpsMixin:
     """Mixin: Common ops and properties.
     """
+
     def __init__(self, dataframe=None):
         self._df = dataframe
 
@@ -46,23 +47,8 @@ class DataFrameCommonOpsMixin:
         return len(self._df)
 
     @classmethod
-    @abstractmethod
     def init(cls, dataframe=None):
         return cls(dataframe=dataframe)
-
-    @abstractmethod
-    def _calculate_statistics(self):
-        raise NotImplemented()
-
-    def describe(self, filename: str = None):
-        info = self._calculate_statistics()
-
-        if filename:
-            info.to_csv(filename, sep='\t', float_format='%.2f')
-        else:
-            print(info)
-            print('Выбрано: {total} объектов'.format(total=self.size))
-        return info
 
 
 class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
@@ -336,6 +322,16 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
                 file.write("std value: {value}\n".format(value=sv))
         return mv, sv
 
+    def describe(self, filename: str = None):
+        info = self._calculate_statistics()
+
+        if filename:
+            info.to_csv(filename, sep='\t', float_format='%.2f')
+        else:
+            print(info)
+            print('Выбрано: {total} объектов'.format(total=self.size))
+        return info
+
     def show(self):
         for image in self.images:
             print(image)
@@ -503,3 +499,13 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
             info.loc[series.iloc[0]["cluster"], group] = [len(series), np.sum(changed)]
 
         return info.dropna()
+
+    def describe(self, filename: str = None):
+        info = self._calculate_statistics()
+
+        if filename:
+            info.to_csv(filename, sep='\t', float_format='%.2f')
+        else:
+            print(info)
+            print('Выбрано: {total} объектов'.format(total=self.size))
+        return info

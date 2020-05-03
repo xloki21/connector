@@ -89,3 +89,46 @@ def draw_scoreboxes(image,
     result = save_axes(ax, dpi=dpi)
     plt.close()
     return result
+
+
+def draw_rect_with_attributes_and_landmarks(image,
+                                            rect=None,
+                                            color=None,
+                                            attributes=None,
+                                            landmarks=None,
+                                            fill=False,
+                                            dpi=100):
+    patch_collection = []
+    height, width = image.shape[:2]
+    fig = plt.figure(figsize=(width / float(dpi), height / float(dpi)))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(image)
+
+    if rect and all([coord is not None for coord in rect]):
+        xmin, ymin, width, height = rect
+        # rect
+        if fill:
+            p_roi = patches.Rectangle((xmin, ymin), width, height, color=color, fill=fill,
+                                      alpha=0.3)
+            patch_collection.append(p_roi)
+
+        p_border = patches.Rectangle((xmin, ymin), width, height, color=color, fill=False,
+                                     linewidth=2)
+        patch_collection.append(p_border)
+
+    if attributes:
+        att_text = '\n'.join(attributes)
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+
+        # attributes
+        ax.text(0.05, 0.95, att_text, transform=ax.transAxes, fontsize=25,
+                verticalalignment='top', bbox=props)
+
+    if landmarks:
+        ax.plot(landmarks[0::2], landmarks[1::2], 'go')
+
+    p = PatchCollection(patch_collection, match_original=True)
+    ax.add_collection(p)
+    result = save_axes(ax, dpi=dpi)
+    plt.close()
+    return result

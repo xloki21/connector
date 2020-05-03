@@ -15,10 +15,6 @@ class DOTADatasetConnector(LocalisationDatasetConnector):
         self.name = 'DOTA'
 
     @classmethod
-    def init(cls, dataframe=None):
-        return cls(dataframe=dataframe)
-
-    @classmethod
     def connect(cls, imagedir, labeldir, rebuild_index=False):
         """
         Создать коннектор для датасета.
