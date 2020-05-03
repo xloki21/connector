@@ -20,11 +20,11 @@
 - вычислять описательную статистику для любого среза данных;
 - визуализировать срез данных для заданной группы.
 
-#### 1. Установка
+## 1. Installation
 ``` python setup.py install```
 
-#### 2. Пример. Подключение к датасету в формате Dota
-
+## 2. Examples
+#### 2.1 DOTA dataset workflow example
 ```python
 import os
 import matplotlib.pyplot as plt
@@ -51,9 +51,9 @@ selected_objects.describe(filename=None)
 image_with_annotation = selected_objects.draw_image_annotation(image_file='/path/to/dataset/dota/train/images/P0178.png')
 plt.imsave('dota.jpg', image_with_annotation)
 ```
-![img](doc/dota.jpg)
+![img](doc/img/dota.jpg)
 
-#### 3. Пример. Подключение к датасету в формате PASCAL VOC.
+#### 2.2 PASCAL VOC dataset workflow example
 
 ```python
 from connector.pascalvoc import PASCALVOCDatasetConnector
@@ -86,7 +86,7 @@ converted_dataset.calculate_stat_coeffs(n_bootstrap=100, filename="stat.coeffs")
 converted_dataset.create_coco_format_annotation(jsonfile="coco_format.json")
 
 ```
-#### 4. Пример. Подключение к датасету CD2014.
+#### 2.3 CD2014 dataset workflow example
 ```python
 import os.path as path
 from connector.cd2014 import CDDatasetConnector
@@ -112,5 +112,31 @@ data.describe()
 print(data.calculate_stat_coeffs(n_bootsrap=100))
 ```
 
+#### 2.4 CelebA dataset workflow example
+```python
+from connector.celeba import CelebADatasetConnector
 
+root_folder = '/path/to/dataset/CelebA'
 
+# use original data
+conn = CelebADatasetConnector.connect(folder=root_folder, aligned=False)
+
+# select all data for person with id `206`
+person_206 = conn.select_person(idx=[206])
+
+# visualize annotation
+person_206.show(show_attributes=False)
+```
+example output:
+![img](doc/img/celeba.jpg)
+or 
+```python
+from connector.celeba import CelebADatasetConnector
+
+root_folder = '/path/to/dataset/CelebA'
+conn = CelebADatasetConnector.connect(folder=root_folder, aligned=True)
+
+print(len(conn.attributes), conn.attributes)
+conn.select_attributes(attributes=['Attractive', 'Black_Hair']).show(show_attributes=False)
+```
+![img](doc/img/celeba_aligned.jpg)

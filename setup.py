@@ -1,6 +1,5 @@
 from setuptools import setup
 
-#
 setup(name='connector',
       version='1.0',
       description='Пакет для работы с популярными датасетами',
