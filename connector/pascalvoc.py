@@ -5,6 +5,7 @@ import pandas as pd
 import tqdm
 
 from connector.generic import LocalisationDatasetConnector
+from connector.tools.visualization import create_custom_colordict, draw_rect_items
 from connector.tools.xml import convert_pascal_voc_to_dict
 
 
@@ -12,6 +13,7 @@ class PASCALVOCDatasetConnector(LocalisationDatasetConnector):
     def __init__(self, dataframe):
         super().__init__(dataframe)
         self.name = 'PASCALVOC'
+        self.default_label_set = self.labels
 
     @classmethod
     def init(cls, dataframe=None):
@@ -52,3 +54,20 @@ class PASCALVOCDatasetConnector(LocalisationDatasetConnector):
 
     def convert_to_original_format(self, connector, labeldir):
         pass
+
+    def collater_fn(self, data):
+        pass
+
+    def draw_image_annotation(self, image_file, color_dict=None):
+        # original data annotated as hbboxes.
+        subset = self.select_images(image_idx=image_file)
+        if color_dict is None:
+            color_dict = create_custom_colordict(self.default_label_set, cmap='hsv', alpha=120)
+
+        annotated_image = draw_rect_items(image_filename=image_file,
+                                          items=subset.hbbox,
+                                          labels=subset.df.label,
+                                          color_dict=color_dict,
+                                          scores=None,
+                                          filled=True)
+        return annotated_image

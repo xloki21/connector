@@ -1,13 +1,13 @@
 import os
 import pandas as pd
 
-from connector.generic import DataFrameCommonOpsMixin, BaseDatasetConnector
+from connector.generic import DataFrameCommonOpsMixin
 from connector.tools.imaging import imread_full, pil_to_nparray
 from connector.tools.visualization import draw_rect_with_attributes_and_landmarks
 import matplotlib.pyplot as plt
 
 
-class CelebADatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
+class CelebADatasetConnector(DataFrameCommonOpsMixin):
     def __init__(self, dataframe=None):
         super().__init__(dataframe=dataframe)
         self.name = 'CelebA'
@@ -21,7 +21,6 @@ class CelebADatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
     @property
     def attributes(self):
         return self.df.columns[len(self.df.columns) - 40:].tolist()
-        # return self.df.columns[16:].tolist()
 
     @property
     def images(self):

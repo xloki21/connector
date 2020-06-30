@@ -1,7 +1,6 @@
 import multiprocessing
 import connector.tools.sampler as _sampler
 from multiprocessing.pool import ThreadPool
-from queue import Queue
 
 
 def _thread_worker_fn(samples, batch_fn, dataset):
@@ -13,7 +12,7 @@ class _MultiWorkerIter:
 
         self._worker_pool = worker_pool
         self._batch_sampler = batch_sampler
-        self._data_buffer = Queue(prefetch + 1)
+        self._data_buffer = {}
         self._rcvd_idx = 0
         self._sent_idx = 0
         self._iter = iter(self._batch_sampler)
@@ -32,7 +31,7 @@ class _MultiWorkerIter:
 
         async_ret = self._worker_pool.apply_async(self._worker_fn, [r])
 
-        self._data_buffer.put_nowait(async_ret)
+        self._data_buffer[self._sent_idx] = async_ret
         self._sent_idx += 1
 
     def __next__(self):
@@ -41,7 +40,7 @@ class _MultiWorkerIter:
         if self._rcvd_idx == self._sent_idx:
             raise StopIteration
 
-        ret = self._data_buffer.get()
+        ret = self._data_buffer.pop(self._rcvd_idx)
         try:
             batch = ret.get(self._timeout)
 
@@ -62,7 +61,7 @@ class _MultiWorkerIter:
     def __len__(self):
         return len(self._batch_sampler)
 
-# test
+
 class DataLoader:
     """Loads data from a dataset and returns mini-batches of data.
     Parameters
@@ -87,6 +86,7 @@ class DataLoader:
         Sometimes full `shared_memory` will cause all workers to hang and causes timeout. In these
         cases please reduce `num_workers` or increase system `shared_memory` size instead.
     """
+
     def __init__(self, connector, batch_size, shuffle=False, last_batch=None, num_workers=0, timeout=120):
 
         self._connector = connector
@@ -119,11 +119,13 @@ class DataLoader:
                 for batch in self._batch_sampler:
                     ret = self._connector.collater_fn(batch)
                     yield ret
+
             return same_process_iter()
 
         return _MultiWorkerIter(self._worker_pool, self._batch_sampler,
                                 worker_fn=self._connector.collater_fn,
                                 prefetch=self._prefetch,
+                                # dataset=self._dataset,
                                 timeout=self._timeout)
 
     def __len__(self):

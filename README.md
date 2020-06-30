@@ -27,9 +27,7 @@
 #### 2.1 DOTA dataset workflow example
 ```python
 import os
-import matplotlib.pyplot as plt
-
-from connector.dota import DOTADatasetConnector
+from connector import DOTADatasetConnector
 
 root_dir = r'/path/to/dataset/dota/train'
 
@@ -49,7 +47,7 @@ selected_objects.describe(filename=None)
 
 # draw annotation of 'P0178.png' in custom dataset slice.
 image_with_annotation = selected_objects.draw_image_annotation(image_file='/path/to/dataset/dota/train/images/P0178.png')
-plt.imsave('dota.jpg', image_with_annotation)
+image_with_annotation.save('P0178_annotated.jpg')
 ```
 ![img](doc/img/dota.jpg)
 
@@ -74,7 +72,7 @@ data.describe(filename=None)
 
 # convert selected data with sliding window patches of shape (512х512) and overlapped with 0.5 x (height, widht)
 # save new data to 'new_dataset_dir'
-data.convert(roi_shape=(512, 512), imagedir=new_dataset_dir, labeldir=new_dataset_dir, rel_shift=0.5)
+data.convert(patch_shape=(512, 512), imagedir=new_dataset_dir, labeldir=new_dataset_dir, rel_shift=0.5)
 
 # connector: connect to new dataset
 converted_dataset = PASCALVOCDatasetConnector.connect(imagedir=new_dataset_dir, labeldir=new_dataset_dir)

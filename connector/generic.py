@@ -1,27 +1,21 @@
 import os
 import glob
+from abc import abstractmethod
+from multiprocessing.pool import ThreadPool
+from typing import Iterable
+
 import tqdm
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from abc import abstractmethod, ABC
-from multiprocessing.pool import ThreadPool
+from PIL.ImageStat import Stat
 
+from connector.tools.sampler import *
+from connector.tools.visualization import draw_poly_items, create_custom_colordict
+from connector.tools.imaging import imread_full, imread_lazy, crop_patches, pil_to_nparray
+from connector.tools.imaging import imread_and_mean_and_std
 from connector.tools.json import save_json_data
-from connector.tools.visualization import draw_scoreboxes
-from connector.tools.multiprocessing import creating_task_for_pool
-from connector.tools.imaging import imread_full, imread_lazy, crop_patches
-from connector.tools.imaging import imread_and_mean_and_std, pil_to_nparray
-
-
-class BaseDatasetConnector(ABC):
-    def __init__(self):
-        self._thread = os.cpu_count() * 2
-        self._prefetch = self._thread * 2
-        self._worker_pool = ThreadPool(self._thread)
-        # TODO: Надо написать еще какие-нибудь методы
-        # self._worker_pool.close()
+from connector.tools.dataloader import _MultiWorkerIter
 
 
 class DataFrameCommonOpsMixin:
@@ -51,14 +45,18 @@ class DataFrameCommonOpsMixin:
         return cls(dataframe=dataframe)
 
 
-class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
+class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
     def __init__(self, dataframe):
         super().__init__(dataframe=dataframe)
+        self._thread = os.cpu_count() - 2
+        self._worker_pool = None
+        self.default_label_set = None
 
     def __str__(self):
         labels_info = "Dataset with {n} label(s): {labels}".format(n=len(self.labels), labels=self.labels)
-        images_info = "Number of images: {n}".format(n=len(self.images))
-        return "\n".join([labels_info, images_info])
+        images_info = "Number of unique images: {n}".format(n=len(self.images))
+        objects_info = "Number of objects: {n}".format(n=len(self))
+        return "\n".join([labels_info, objects_info, images_info])
 
     @property
     def images(self):
@@ -67,6 +65,31 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
     @property
     def labels(self):
         return self._df.label.unique()
+
+    @property
+    def width(self):
+        return self.df.x.apply(lambda x: max(x)) - self.df.x.apply(lambda x: min(x))
+
+    @property
+    def height(self):
+        return self.df.y.apply(lambda x: max(x)) - self.df.y.apply(lambda x: min(x))
+
+    @property
+    def hbbox(self):
+        xmin = self.df.x.apply(lambda x: min(x))
+        xmin.name = 'xmin'
+        ymin = self.df.y.apply(lambda x: min(x))
+        ymin.name = 'ymin'
+        xmax = self.df.x.apply(lambda x: max(x))
+        xmax.name = 'xmax'
+        ymax = self.df.y.apply(lambda x: max(x))
+        ymax.name = 'ymax'
+        return pd.concat([xmin, ymin, xmax, ymax], axis=1)
+
+    @property
+    def obbox(self):
+        result = (self.df.x + self.df.y).apply(lambda x: [(x[i], x[i + 4]) for i in range(len(x) // 2)])
+        return result
 
     def create_coco_format_annotation(self, jsonfile=None, labeltoid: dict = None):
         annotations = []
@@ -83,18 +106,18 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
                  "id": 0}
         images = [image] * len(self.images)
         for i, filename in tqdm.tqdm(enumerate(self.images), desc='loading image information', total=len(self.images)):
-            imshape = imread_lazy(filename).size
+            imw, imh = imread_lazy(filename).size
             image["file_name"] = filename
-            image["height"] = imshape[0]
-            image["width"] = imshape[1]
+            image["height"] = imh
+            image["width"] = imw
             image["id"] = imagetoid[filename]
             images[i] = image.copy()
-
-        for i, entry in tqdm.tqdm(self.df.iterrows(), total=self.size, desc='converting annotation to COCO format'):
-            xmin = min(entry.x)
-            ymin = min(entry.y)
-            width = max(entry.x) - xmin + 1
-            height = max(entry.y) - ymin + 1
+        extended = self.df.join(self.hbbox)
+        for i, entry in tqdm.tqdm(extended.iterrows(), total=self.size, desc='converting annotation to COCO format'):
+            xmin = entry.xmin
+            ymin = entry.ymin
+            width = entry.xmax - xmin + 1
+            height = entry.ymax - ymin + 1
             annotation = {
                 "id": bbox_id,
                 "image_id": imagetoid[entry.image],
@@ -123,7 +146,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
         raise NotImplementedError('Not implemented')
 
     @abstractmethod
-    def collate_fn(self, data):
+    def collater_fn(self, data):
         raise NotImplementedError('Not implemented')
 
     @abstractmethod
@@ -143,7 +166,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
         return self.init(dataframe=self.df.loc[idx])
 
     def select_objects(self, width=None, height=None):
-        df = self.df.copy()
+        df = self.df.copy()  # ?
 
         if width:
             w = df.x.apply(lambda x: max(x)) - df.x.apply(lambda x: min(x))
@@ -203,7 +226,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
 
         return self.init(dataframe=local_df.loc[idx])
 
-    def convert(self, roi_shape, imagedir, labeldir, rel_shift=1.0, padding=True):
+    def convert(self, patch_shape, imagedir, labeldir, rel_shift=1.0, padding=True):
         if not os.path.exists(labeldir):
             os.makedirs(labeldir, exist_ok=True)
 
@@ -213,14 +236,14 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
         images = self.images
 
         df = None
-        dy = int(roi_shape[0] * rel_shift)
-        dx = int(roi_shape[1] * rel_shift)
+        dy = int(patch_shape[0] * rel_shift)
+        dx = int(patch_shape[1] * rel_shift)
         for imgname in tqdm.tqdm(images, desc='Converting'):
             img_basename = os.path.basename(imgname)
             img_basename_wo_ext, ext = os.path.splitext(img_basename)
 
             xmin, ymin, xmax, ymax = crop_patches(image_filepath=imgname,
-                                                  patch_shape=roi_shape,
+                                                  patch_shape=patch_shape,
                                                   dx=dx,
                                                   dy=dy,
                                                   patch_root_dir=imagedir,
@@ -253,33 +276,24 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
         conn.save(folder=labeldir, shard_size=10000)
         return conn
 
-    def draw_image_annotation(self, image_file, cmap='autumn'):
-        raw_img = imread_full(image_file)
-        raw_img = pil_to_nparray(raw_img)
-        # Получаем глобальный список меток для среза.
-        image_info = self.select_images(image_idx=image_file)
-
-        x = image_info.df.x
-        y = image_info.df.y
-        xmin = x.apply(lambda var: min(var))
-        xmax = x.apply(lambda var: max(var))
-        ymin = y.apply(lambda var: min(var))
-        ymax = y.apply(lambda var: max(var))
-        bboxes = zip(xmin, ymin, xmax, ymax)
-        return draw_scoreboxes(raw_img,
-                               bboxes=bboxes,
-                               labels=image_info.df['label'].values,
-                               scores=None,
-                               fill=True,
-                               cmap=cmap,
-                               score_as_bar=False)
+    def draw_image_annotation(self, image_file, color_dict=None):
+        # default drawing method
+        subset = self.select_images(image_idx=image_file)
+        if color_dict is None:
+            color_dict = create_custom_colordict(self.default_label_set, cmap='hsv', alpha=120)
+        annotated_image = draw_poly_items(image_filename=image_file,
+                                          items=subset.obbox,
+                                          labels=subset.df.label,
+                                          scores=None,
+                                          filled=True,
+                                          color_dict=color_dict)
+        return annotated_image
 
     def _calculate_statistics(self):
         index = pd.MultiIndex.from_product([self.labels, ['width', 'height']],
                                            names=['label', 'feature'])
         info = pd.DataFrame(index=index,
                             columns=['count', 'mean', 'min', '25%', '50%', '75%', 'max'])
-
         for label in self.df.label.unique():
             idx = self.df.label == label
             label_slice = self.df.loc[idx].copy()
@@ -291,26 +305,42 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
             info.loc[label, 'height'] = h_stats
         return info
 
+    def describe(self, filename: str = None):
+        info = self._calculate_statistics()
+
+        if filename:
+            info.to_csv(filename, sep='\t', float_format='%.2f')
+        else:
+            print(info)
+            print('Выбрано: {total} объектов'.format(total=self.size))
+        return info
+
     def calculate_stat_coeffs(self, n_bootsrap=10, sample_size=20, filename=None):
+        self._worker_pool = ThreadPool(self._thread)
+
         def worker_fn(filenames):
             means = np.zeros((len(filenames), 3), dtype=np.float32)
             stds = np.zeros((len(filenames), 3), dtype=np.float32)
             for idx, _filename in enumerate(filenames):
-                _mean, _std = imread_and_mean_and_std(_filename)
-                means[idx, :] = _mean
-                stds[idx, :] = _std
+                imstat = Stat(imread_lazy(_filename))
+                means[idx, :] = imstat.mean
+                stds[idx, :] = imstat.stddev
             return means.mean(axis=0), stds.mean(axis=0)
 
         bootstrap_means = np.zeros(shape=(n_bootsrap, 3))
         bootstrap_stds = np.zeros(shape=(n_bootsrap, 3))
 
-        stat_iter = creating_task_for_pool(sampler=np.random.choice(self.images, size=sample_size * n_bootsrap),
-                                           batch_size=sample_size, worker_pool=self._worker_pool,
-                                           worker_fn=worker_fn, prefetch=self._prefetch)
+        batch_sampler_image = BatchSampler(np.random.choice(self.images, size=sample_size * n_bootsrap),
+                                           batch_size=sample_size)
 
-        for idx_stat, stat in tqdm.tqdm(enumerate(stat_iter),
-                                        desc='Вычисление статистик',
-                                        total=len(stat_iter)):
+        worker_iter = _MultiWorkerIter(worker_pool=self._worker_pool,
+                                       batch_sampler=batch_sampler_image,
+                                       worker_fn=worker_fn,
+                                       prefetch=self._thread * 2)
+
+        for idx_stat, stat in tqdm.tqdm(enumerate(worker_iter),
+                                        desc='Calculating stat coeffs',
+                                        total=n_bootsrap):
             mean, std = stat
             bootstrap_means[idx_stat, :] = mean
             bootstrap_stds[idx_stat, :] = std
@@ -322,24 +352,16 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
                 file.write("std value: {value}\n".format(value=sv))
         return mv, sv
 
-    def describe(self, filename: str = None):
-        info = self._calculate_statistics()
-
-        if filename:
-            info.to_csv(filename, sep='\t', float_format='%.2f')
-        else:
-            print(info)
-            print('Выбрано: {total} объектов'.format(total=self.size))
-        return info
-
     def show(self):
+        color_dict = create_custom_colordict(self.default_label_set, cmap='hsv', alpha=120)
         for image in self.images:
             print(image)
-            result = self.draw_image_annotation(image_file=image)
-            plt.imshow(result)
+            result = self.draw_image_annotation(image_file=image, color_dict=color_dict)
+            plt.imshow(pil_to_nparray(result))
             plt.show()
 
     def save(self, folder, shard_size):
+
         os.makedirs(folder, exist_ok=True)
         n_entries = self.size
 
@@ -366,28 +388,54 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector
     def load(cls, folder):
         pandas_sharded_dataframe = glob.glob(folder + '/*.shard', recursive=True)
         _df = None
-        for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Загрузка датафрейма'):
-            _sdf = pd.read_csv(shard,
-                               delimiter=' ',
-                               header=0,  # Этот ключ необходим, чтобы указать, что 0-строка - это хедер.
-                               names=['image', 'x', 'y', 'label', 'tag'])
-            if _df is None:
-                _df = _sdf.copy()
+        if len(pandas_sharded_dataframe) > 0:
+            for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Загрузка датафрейма'):
+                _sdf = pd.read_csv(shard,
+                                   delimiter=' ',
+                                   header=0,  # Этот ключ необходим, чтобы указать, что 0-строка - это хедер.
+                                   names=['image', 'x', 'y', 'label', 'tag'])
+                if _df is None:
+                    _df = _sdf.copy()
+                else:
+                    _df = _df.append(_sdf.copy())
+
+            def map_str_to_list(strlist):
+                return list(map(float, strlist.strip('[]').split(', ')))
+
+            _df.x = _df.x.apply(map_str_to_list)
+            _df.y = _df.y.apply(map_str_to_list)
+            return cls(dataframe=_df)
+        else:
+            return None
+
+    def split(self, param, seed: int = None):
+        split_sizes = []
+        if isinstance(param, int):
+            split_sizes = [len(self) // param] * param
+        elif isinstance(param, Iterable):
+            if sum(param) <= 1:
+                split_sizes = [int(len(self) * value) for value in param]
             else:
-                _df = _df.append(_sdf.copy())
+                split_sizes = param
+        if seed:
+            ind = np.arange(0, len(self), dtype=np.int64)
+            np.random.seed(seed=seed)
+            np.random.shuffle(ind)
+            self.df.index = pd.Int64Index(ind)
+        result = []
+        index_to = 0
+        for split_size in split_sizes:
+            index_from = index_to
+            index_to += split_size
+            result.append(self.init(dataframe=self.df.iloc[index_from:index_to]))
+        return result
 
-        def map_str_to_list(strlist):
-            return list(map(float, strlist.strip('[]').split(', ')))
 
-        _df.x = _df.x.apply(map_str_to_list)
-        _df.y = _df.y.apply(map_str_to_list)
-
-        return cls(dataframe=_df)
-
-
-class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnector):
+class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
     def __init__(self, dataframe):
         super().__init__(dataframe=dataframe)
+        self._threads = os.cpu_count() - 2
+        self._worker_pool = None
 
     @property
     def image0(self):
@@ -411,7 +459,7 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
         raise NotImplementedError('Not implemented')
 
     @abstractmethod
-    def collate_fn(self, data):
+    def collater_fn(self, data):
         raise NotImplementedError('Not implemented')
 
     def select_group(self, groups):
@@ -435,10 +483,13 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
         return self.init(dataframe=self.df.loc[idx])
 
     def calculate_stat_coeffs(self, n_bootsrap=10, sample_size=20, filename=None):
+        self._worker_pool = ThreadPool(self._threads)
+
         def worker_fn(filenames):
             means = np.zeros((len(filenames), 3), dtype=np.float32)
             stds = np.zeros((len(filenames), 3), dtype=np.float32)
             for idx, _filename in enumerate(filenames):
+                imstat = Stat(imread_lazy(_filename))
                 _mean, _std = imread_and_mean_and_std(_filename)
                 means[idx, :] = _mean
                 stds[idx, :] = _std
@@ -448,20 +499,23 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
         bootstrap_stds = np.zeros(shape=(2, n_bootsrap, 3))
 
         for i, image in enumerate([self.image0, self.image1]):
+            batch_sampler_image1 = BatchSampler(np.random.choice(image, size=sample_size * n_bootsrap),
+                                                batch_size=sample_size)
 
-            stat_iter = creating_task_for_pool(sampler=np.random.choice(image, size=sample_size * n_bootsrap),
-                                               batch_size=sample_size, worker_pool=self._worker_pool,
-                                               worker_fn=worker_fn, prefetch=self._prefetch)
+            stat_iter = _MultiWorkerIter(worker_pool=self._worker_pool,
+                                         batch_sampler=batch_sampler_image1,
+                                         worker_fn=worker_fn,
+                                         prefetch=self._threads * 2)
 
             for idx_stat, stat in tqdm.tqdm(enumerate(stat_iter),
                                             desc='Изображение {}'.format(i),
-                                            total=len(stat_iter)):
+                                            total=n_bootsrap):
                 mean, std = stat
                 bootstrap_means[i, idx_stat, :] = mean
                 bootstrap_stds[i, idx_stat, :] = std
 
-        mv = bootstrap_means.mean(axis=1)
-        sv = bootstrap_stds.mean(axis=1)
+        mv = bootstrap_means.mean(axis=(1, 2))
+        sv = bootstrap_stds.mean(axis=(1, 2))
 
         if filename:
             with open(filename, 'w') as file:
@@ -488,9 +542,13 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
             idx = self.df.group == group
             series = self.df.loc[idx].copy()
 
-            worker_iter = creating_task_for_pool(sampler=np.random.choice(series["mask"], size=len(series)),
-                                                 batch_size=1, worker_pool=self._worker_pool,
-                                                 worker_fn=worker_fn, prefetch=self._prefetch)
+            batch_sampler = BatchSampler(np.random.choice(series["mask"], size=len(series)),
+                                         batch_size=1)
+
+            worker_iter = _MultiWorkerIter(worker_pool=self._worker_pool,
+                                           batch_sampler=batch_sampler,
+                                           worker_fn=worker_fn,
+                                           prefetch=self._threads * 2)
 
             changed = np.zeros(len(series))
             for i, res in enumerate(worker_iter):
@@ -509,3 +567,90 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin, BaseDatasetConnec
             print(info)
             print('Выбрано: {total} объектов'.format(total=self.size))
         return info
+
+    def convert(self, patch_shape, root_dir, rel_shift=1.0, padding=True):
+
+        if not os.path.exists(root_dir):
+            os.makedirs(root_dir, exist_ok=True)
+
+
+        for cluster in self.cluster:
+            cluster_data = self.select_cluster(clusters=cluster)
+            images0 = cluster_data.image0
+            images1 = cluster_data.image1
+            gts = cluster_data.df['mask']
+            dy = int(patch_shape[0] * rel_shift)
+            dx = int(patch_shape[1] * rel_shift)
+
+            cluster_dir = os.path.join(root_dir, cluster)
+            if not os.path.exists(cluster_dir):
+                os.makedirs(cluster_dir, exist_ok=True)
+
+            imagedir_t0 = os.path.join(cluster_dir, 't0')
+            imagedir_t1 = os.path.join(cluster_dir, 't1')
+            imagedir_gt = os.path.join(cluster_dir, 'gt')
+
+            if not os.path.exists(imagedir_t0):
+                os.makedirs(imagedir_t0, exist_ok=True)
+
+            if not os.path.exists(imagedir_t1):
+                os.makedirs(imagedir_t1, exist_ok=True)
+
+            if not os.path.exists(imagedir_gt):
+                os.makedirs(imagedir_gt, exist_ok=True)
+
+            with open(os.path.join(root_dir, 'data.txt'), 'w') as file:
+                for imgname1, imgname2, imgnamegt in tqdm.tqdm(zip(images0, images1, gts), desc='Converting timeline data'):
+                    img1_basename = os.path.basename(imgname1)
+                    img1_basename_wo_ext, ext1 = os.path.splitext(img1_basename)
+
+                    img2_basename = os.path.basename(imgname2)
+                    img2_basename_wo_ext, ext2 = os.path.splitext(img2_basename)
+
+                    imggt_basename = os.path.basename(imgnamegt)
+                    imggt_basename_wo_ext, ext3 = os.path.splitext(imggt_basename)
+
+                    # crop t0 data
+                    xmin1, ymin1, xmax1, ymax1 = crop_patches(image_filepath=imgname1,
+                                                              patch_shape=patch_shape,
+                                                              dx=dx,
+                                                              dy=dy,
+                                                              patch_root_dir=imagedir_t0,
+                                                              ext=ext1,
+                                                              padding=padding,
+                                                              max_workers=8)
+                    cropnames1 = [os.path.join(cluster, 't0',
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=img1_basename_wo_ext,
+                                                                                            ymin=y, xmin=x, ext=ext1)) for
+                                  (x, y) in zip(xmin1, ymin1)]
+                    # crop t1 data
+                    xmin2, ymin2, xmax2, ymax2 = crop_patches(image_filepath=imgname2,
+                                                              patch_shape=patch_shape,
+                                                              dx=dx,
+                                                              dy=dy,
+                                                              patch_root_dir=imagedir_t1,
+                                                              ext=ext2,
+                                                              padding=padding,
+                                                              max_workers=8)
+                    cropnames2 = [os.path.join(cluster, 't1',
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=img2_basename_wo_ext,
+                                                                                            ymin=y, xmin=x, ext=ext2)) for
+                                  (x, y) in zip(xmin2, ymin2)]
+                    # crop gt data
+                    xmingt, ymingt, xmaxgt, ymaxgt = crop_patches(image_filepath=imgnamegt,
+                                                                  patch_shape=patch_shape,
+                                                                  dx=dx,
+                                                                  dy=dy,
+                                                                  patch_root_dir=imagedir_gt,
+                                                                  ext=ext3,
+                                                                  padding=padding,
+                                                                  max_workers=8)
+                    cropnames3 = [os.path.join(cluster, 'gt',
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=imggt_basename_wo_ext,
+                                                                                            ymin=y, xmin=x, ext=ext3)) for
+                                  (x, y) in zip(xmingt, ymingt)]
+
+                    for cn1, cn2, cn3 in zip(cropnames1, cropnames2, cropnames3):
+                        print("{value1} {value2} {value3}".format(value1=cn1,
+                                                                  value2=cn2,
+                                                                  value3=cn3), file=file)
