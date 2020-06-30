@@ -1,5 +1,8 @@
 import io
 import numpy as np
+from PIL.ImageDraw import ImageDraw
+
+from connector.tools.imaging import imread_lazy
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
@@ -16,81 +19,6 @@ def save_axes(ax, dpi):
     return img
 
 
-def draw_scoreboxes(image,
-                    bboxes,
-                    labels,
-                    scores=None,
-                    fill=False,
-                    dpi=100,
-                    cmap='hsv',
-                    score_as_bar=True):
-    patch_collection = []
-    height, width = image.shape[:2]
-    fig = plt.figure(figsize=(width / float(dpi), height / float(dpi)))
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(image)
-
-    cmap = ScalarMappable(cmap=cmap).get_cmap()
-    n_classes = len(np.unique(labels))
-
-    if scores is not None:
-        scores = np.clip(scores, 0, 1)
-
-    colormap_arr = cmap(np.linspace(0, 255, n_classes).astype(int))
-    colors = {label: colormap_arr[idx] for idx, label in enumerate(np.unique(labels))}
-    for i, (bbox, label) in enumerate(zip(bboxes, labels)):
-        xmin, ymin, xmax, ymax = bbox
-
-        if fill:
-            p_roi = patches.Rectangle((xmin, ymin), xmax - xmin + 1, ymax - ymin + 1, color=colors[label], fill=fill,
-                                      alpha=0.3)
-            patch_collection.append(p_roi)
-
-        p_border = patches.Rectangle((xmin, ymin), xmax - xmin + 1, ymax - ymin + 1, color=colors[label], fill=False,
-                                     linewidth=2)
-        patch_collection.append(p_border)
-
-        height = ymax - ymin + 1
-        width = xmax - xmin + 1
-
-        if scores is not None:
-            score = scores[i]
-            if score_as_bar:
-                p_bar_width = int(np.clip(width * 0.1, a_min=6, a_max=10))
-
-                p_bar_border = patches.Rectangle((xmax + 5,
-                                                  ymin + (1 - score) * height),
-                                                 p_bar_width,
-                                                 scores[i] * height - 1,
-                                                 color=(1 - score, score, 0),
-                                                 fill=False, linewidth=2)
-
-                patch_collection.append(p_bar_border)
-
-                p_bar_roi = patches.Rectangle((xmax + 5, ymin + (1 - score) * height),
-                                              p_bar_width, score * height - 1,
-                                              color=(1 - score, score, 0),
-                                              fill=True)
-
-                patch_collection.append(p_bar_roi)
-
-                p_bar_border_split = patches.Rectangle((xmax + 5, ymin + (1 - score) * height),
-                                                       p_bar_width,
-                                                       score * height - 1,
-                                                       color='black',
-                                                       fill=False, linewidth=1)
-                patch_collection.append(p_bar_border_split)
-            else:
-                ax.text(xmin + 3, ymin + 15, "{score:.02f}".format(score=score), color='black')
-        ax.text(xmin + 3, ymax - 3, label, color='black')
-
-    p = PatchCollection(patch_collection, match_original=True)
-    ax.add_collection(p)
-    result = save_axes(ax, dpi=dpi)
-    plt.close()
-    return result
-
-
 def draw_rect_with_attributes_and_landmarks(image,
                                             rect=None,
                                             color=None,
@@ -98,6 +26,7 @@ def draw_rect_with_attributes_and_landmarks(image,
                                             landmarks=None,
                                             fill=False,
                                             dpi=100):
+    # todo: ==> PIL
     patch_collection = []
     height, width = image.shape[:2]
     fig = plt.figure(figsize=(width / float(dpi), height / float(dpi)))
@@ -132,3 +61,100 @@ def draw_rect_with_attributes_and_landmarks(image,
     result = save_axes(ax, dpi=dpi)
     plt.close()
     return result
+
+
+def create_custom_colordict(labels, cmap, alpha):
+    cmap = ScalarMappable(cmap=cmap).get_cmap()
+    n_classes = len(labels)
+    colormap_arr = (cmap(range(0, 255, 255 // n_classes)) * 255).astype(int)
+    colormap_arr[:, -1] = alpha
+    colors = {label: (colormap_arr[idx]) for idx, label in enumerate(np.unique(labels))}
+    return colors
+
+
+def draw_rect_items(image_filename,
+                    items,
+                    labels,
+                    color_dict,
+                    scores=None,
+                    filled=True,
+                    scores_as_bar=False):
+    img = imread_lazy(image_filename)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    border_width = 3
+    painter = ImageDraw(im=img, mode='RGBA')
+
+    if len(labels) > 0:
+        if scores is not None:
+            scores = np.clip(scores, 0, 1)
+        else:
+            scores = [None] * len(labels)
+
+    for (index, item), label, score in zip(items.iterrows(), labels, scores):
+        xmin, ymin, xmax, ymax = item
+        width = xmax - xmin
+        height = ymax - ymin
+        painter.rectangle(xy=item,
+                          outline=(*tuple(color_dict[label])[:3], 255),
+                          fill=tuple(color_dict[label]) if filled else None,
+                          width=border_width)
+        t_width, t_height = painter.textsize(text="{label}".format(label=label))
+        if (t_width < width) and (t_height < height):
+            tcx, tcy = (xmin + xmax) // 2, (ymin + ymax) // 2,
+            painter.text(xy=(tcx - t_width // 2, tcy - t_height // 2),
+                         text="{label}".format(label=label),
+                         fill=(0, 0, 0))
+
+        if score:
+            if scores_as_bar:
+                p_bar_width = int(np.clip(width * 0.1, a_min=6, a_max=10))
+                bxmin = xmax + 5
+                bymin = int(ymin + (1 - score) * height)
+
+                painter.rectangle(xy=(bxmin,
+                                      bymin,
+                                      bxmin + p_bar_width,
+                                      int(bymin + score * height)),
+                                  outline=None,
+                                  fill=(int(255 * (1 - score)), int(255 * score), 0))
+            t_width, t_height - painter.textsize(text="{score:0.2f".format(score=score))
+            painter.text(xy=(xmin + border_width + 1, ymax - border_width - t_height + 2),
+                         text="{score:0.2f".format(score=score),
+                         fill=(0, 0, 0))
+    return img
+
+
+def draw_poly_items(image_filename,
+                    items,
+                    labels,
+                    color_dict,
+                    scores=None,
+                    filled=True):
+    img = imread_lazy(image_filename)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    painter = ImageDraw(im=img, mode='RGBA')
+
+    if len(items) > 0:
+        if scores is not None:
+            scores = np.clip(scores, 0, 1)
+        else:
+            scores = [None] * len(items)
+    for i, (item, label, score) in enumerate(zip(items, labels, scores)):
+        painter.polygon(xy=item,
+                        fill=tuple(color_dict[label]) if filled else None,
+                        outline=(*tuple(color_dict[label])[:3], 255))
+
+        t_width, t_height = painter.textsize(text="{label}".format(label=label))
+        width, height = np.max(item, axis=0) - np.min(item, axis=0)
+        if (t_width < width) and (t_height < height):
+            tcx, tcy = np.sum(item, axis=0) / len(item)
+            painter.text(xy=(tcx - t_width // 2, tcy - t_height // 2),
+                         text="{label}".format(label=label),
+                         fill=(0, 0, 0))
+
+        x, y = item[0]
+        painter.rectangle(xy=(x - 2, y - 2,
+                              x + 2, y + 2), fill=(255, 255, 0, 255))
+    return img

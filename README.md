@@ -74,7 +74,7 @@ data.describe(filename=None)
 
 # convert selected data with sliding window patches of shape (512х512) and overlapped with 0.5 x (height, widht)
 # save new data to 'new_dataset_dir'
-data.convert(roi_shape=(512, 512), imagedir=new_dataset_dir, labeldir=new_dataset_dir, rel_shift=0.5)
+data.convert(patch_shape=(512, 512), imagedir=new_dataset_dir, labeldir=new_dataset_dir, rel_shift=0.5)
 
 # connector: connect to new dataset
 converted_dataset = PASCALVOCDatasetConnector.connect(imagedir=new_dataset_dir, labeldir=new_dataset_dir)
