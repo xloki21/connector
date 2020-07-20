@@ -84,7 +84,13 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         xmax.name = 'xmax'
         ymax = self.df.y.apply(lambda x: max(x))
         ymax.name = 'ymax'
-        return pd.concat([xmin, ymin, xmax, ymax], axis=1)
+
+        data = list(zip(zip(xmin, ymin),
+                          zip(xmin, ymax),
+                          zip(xmax, ymax),
+                          zip(xmax, ymin)))
+
+        return pd.Series(data=data, index=xmin.index)
 
     @property
     def obbox(self):
@@ -276,13 +282,14 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         conn.save(folder=labeldir, shard_size=10000)
         return conn
 
-    def draw_image_annotation(self, image_file, color_dict=None):
+    def draw_image_annotation(self, image_file, color_dict=None, mode='hbb'):
+        assert mode in ('hbb', 'obb')
         # default drawing method
         subset = self.select_images(image_idx=image_file)
         if color_dict is None:
             color_dict = create_custom_colordict(self.default_label_set, cmap='hsv', alpha=120)
         annotated_image = draw_poly_items(image_filename=image_file,
-                                          items=subset.obbox,
+                                          items=subset.hbbox if mode == 'hbb' else subset.obbox,
                                           labels=subset.df.label,
                                           scores=None,
                                           filled=True,
@@ -352,11 +359,12 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
                 file.write("std value: {value}\n".format(value=sv))
         return mv, sv
 
-    def show(self):
-        color_dict = create_custom_colordict(self.default_label_set, cmap='hsv', alpha=120)
+    def show(self, cmap='hsv', mode='hbb'):
+        assert mode in ('hbb', 'obb')
+        color_dict = create_custom_colordict(self.default_label_set, cmap=cmap, alpha=120)
         for image in self.images:
             print(image)
-            result = self.draw_image_annotation(image_file=image, color_dict=color_dict)
+            result = self.draw_image_annotation(image_file=image, color_dict=color_dict, mode=mode)
             plt.imshow(pil_to_nparray(result))
             plt.show()
 
@@ -573,7 +581,6 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
         if not os.path.exists(root_dir):
             os.makedirs(root_dir, exist_ok=True)
 
-
         for cluster in self.cluster:
             cluster_data = self.select_cluster(clusters=cluster)
             images0 = cluster_data.image0
@@ -600,7 +607,8 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
                 os.makedirs(imagedir_gt, exist_ok=True)
 
             with open(os.path.join(root_dir, 'data.txt'), 'w') as file:
-                for imgname1, imgname2, imgnamegt in tqdm.tqdm(zip(images0, images1, gts), desc='Converting timeline data'):
+                for imgname1, imgname2, imgnamegt in tqdm.tqdm(zip(images0, images1, gts),
+                                                               desc='Converting timeline data'):
                     img1_basename = os.path.basename(imgname1)
                     img1_basename_wo_ext, ext1 = os.path.splitext(img1_basename)
 
@@ -620,8 +628,9 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
                                                               padding=padding,
                                                               max_workers=8)
                     cropnames1 = [os.path.join(cluster, 't0',
-                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=img1_basename_wo_ext,
-                                                                                            ymin=y, xmin=x, ext=ext1)) for
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(
+                                                   basename=img1_basename_wo_ext,
+                                                   ymin=y, xmin=x, ext=ext1)) for
                                   (x, y) in zip(xmin1, ymin1)]
                     # crop t1 data
                     xmin2, ymin2, xmax2, ymax2 = crop_patches(image_filepath=imgname2,
@@ -633,8 +642,9 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
                                                               padding=padding,
                                                               max_workers=8)
                     cropnames2 = [os.path.join(cluster, 't1',
-                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=img2_basename_wo_ext,
-                                                                                            ymin=y, xmin=x, ext=ext2)) for
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(
+                                                   basename=img2_basename_wo_ext,
+                                                   ymin=y, xmin=x, ext=ext2)) for
                                   (x, y) in zip(xmin2, ymin2)]
                     # crop gt data
                     xmingt, ymingt, xmaxgt, ymaxgt = crop_patches(image_filepath=imgnamegt,
@@ -646,8 +656,9 @@ class ChangeDetectionDatasetConnector(DataFrameCommonOpsMixin):
                                                                   padding=padding,
                                                                   max_workers=8)
                     cropnames3 = [os.path.join(cluster, 'gt',
-                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(basename=imggt_basename_wo_ext,
-                                                                                            ymin=y, xmin=x, ext=ext3)) for
+                                               "{basename}_{ymin:04}_{xmin:04}{ext}".format(
+                                                   basename=imggt_basename_wo_ext,
+                                                   ymin=y, xmin=x, ext=ext3)) for
                                   (x, y) in zip(xmingt, ymingt)]
 
                     for cn1, cn2, cn3 in zip(cropnames1, cropnames2, cropnames3):
