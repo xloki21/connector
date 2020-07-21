@@ -118,7 +118,10 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
             image["width"] = imw
             image["id"] = imagetoid[filename]
             images[i] = image.copy()
-        extended = self.df.join(self.hbbox)
+
+        extended = self.df.copy()
+        extended['hbbox'] = self.hbbox
+
         for i, entry in tqdm.tqdm(extended.iterrows(), total=self.size, desc='converting annotation to COCO format'):
             xmin = entry['hbbox'][0][0]
             ymin = entry['hbbox'][0][1]
@@ -246,7 +249,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         df = None
         dy = int(patch_shape[0] * rel_shift)
         dx = int(patch_shape[1] * rel_shift)
-        for imgname in tqdm.tqdm(images, desc='Converting'):
+        for imgname in tqdm.tqdm(images, desc='Converting', ascii=True):
             img_basename = os.path.basename(imgname)
             img_basename_wo_ext, ext = os.path.splitext(img_basename)
 
@@ -349,6 +352,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
 
         for idx_stat, stat in tqdm.tqdm(enumerate(worker_iter),
                                         desc='Calculating stat coeffs',
+                                        ascii=True,
                                         total=n_bootsrap):
             mean, std = stat
             bootstrap_means[idx_stat, :] = mean
@@ -399,7 +403,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         pandas_sharded_dataframe = glob.glob(folder + '/*.shard', recursive=True)
         _df = None
         if len(pandas_sharded_dataframe) > 0:
-            for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Загрузка датафрейма'):
+            for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Load dataframe', ascii=True):
                 _sdf = pd.read_csv(shard,
                                    delimiter=' ',
                                    header=0,  # Этот ключ необходим, чтобы указать, что 0-строка - это хедер.
