@@ -29,9 +29,6 @@ class DataFrameCommonOpsMixin:
         _df = self._df.append(connector.df.copy())
         return self.init(dataframe=_df)
 
-    def __len__(self):
-        return len(self._df)
-
     @property
     def df(self):
         return self._df
@@ -54,9 +51,12 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
 
     def __str__(self):
         labels_info = "Dataset with {n} label(s): {labels}".format(n=len(self.labels), labels=self.labels)
+        objects_info = "Number of objects: {n}".format(n=self.size)
         images_info = "Number of unique images: {n}".format(n=len(self.images))
-        objects_info = "Number of objects: {n}".format(n=len(self))
         return "\n".join([labels_info, objects_info, images_info])
+
+    def __len__(self):
+        return len(self.images)
 
     @property
     def images(self):
@@ -86,11 +86,11 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         ymax.name = 'ymax'
 
         data = list(zip(zip(xmin, ymin),
-                          zip(xmin, ymax),
-                          zip(xmax, ymax),
-                          zip(xmax, ymin)))
+                        zip(xmin, ymax),
+                        zip(xmax, ymax),
+                        zip(xmax, ymin)))
 
-        return pd.Series(data=data, index=xmin.index)
+        return pd.Series(data=data, index=xmin.index, name='hbbox')
 
     @property
     def obbox(self):
@@ -118,12 +118,17 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
             image["width"] = imw
             image["id"] = imagetoid[filename]
             images[i] = image.copy()
-        extended = self.df.join(self.hbbox)
+
+        extended = self.df.copy()
+        extended['hbbox'] = self.hbbox
+
         for i, entry in tqdm.tqdm(extended.iterrows(), total=self.size, desc='converting annotation to COCO format'):
-            xmin = entry.xmin
-            ymin = entry.ymin
-            width = entry.xmax - xmin + 1
-            height = entry.ymax - ymin + 1
+            xmin = entry['hbbox'][0][0]
+            ymin = entry['hbbox'][0][1]
+            xmax = entry['hbbox'][2][0]
+            ymax = entry['hbbox'][2][1]
+            width = xmax - xmin + 1
+            height = ymax - ymin + 1
             annotation = {
                 "id": bbox_id,
                 "image_id": imagetoid[entry.image],
@@ -244,7 +249,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         df = None
         dy = int(patch_shape[0] * rel_shift)
         dx = int(patch_shape[1] * rel_shift)
-        for imgname in tqdm.tqdm(images, desc='Converting'):
+        for imgname in tqdm.tqdm(images, desc='Converting', ascii=True):
             img_basename = os.path.basename(imgname)
             img_basename_wo_ext, ext = os.path.splitext(img_basename)
 
@@ -347,6 +352,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
 
         for idx_stat, stat in tqdm.tqdm(enumerate(worker_iter),
                                         desc='Calculating stat coeffs',
+                                        ascii=True,
                                         total=n_bootsrap):
             mean, std = stat
             bootstrap_means[idx_stat, :] = mean
@@ -397,7 +403,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         pandas_sharded_dataframe = glob.glob(folder + '/*.shard', recursive=True)
         _df = None
         if len(pandas_sharded_dataframe) > 0:
-            for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Загрузка датафрейма'):
+            for shard in tqdm.tqdm(pandas_sharded_dataframe, desc='Load dataframe', ascii=True):
                 _sdf = pd.read_csv(shard,
                                    delimiter=' ',
                                    header=0,  # Этот ключ необходим, чтобы указать, что 0-строка - это хедер.
@@ -419,14 +425,14 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
     def split(self, param, seed: int = None):
         split_sizes = []
         if isinstance(param, int):
-            split_sizes = [len(self) // param] * param
+            split_sizes = [self.size // param] * param
         elif isinstance(param, Iterable):
             if sum(param) <= 1:
-                split_sizes = [int(len(self) * value) for value in param]
+                split_sizes = [int(self.size * value) for value in param]
             else:
                 split_sizes = param
         if seed:
-            ind = np.arange(0, len(self), dtype=np.int64)
+            ind = np.arange(0, self.size, dtype=np.int64)
             np.random.seed(seed=seed)
             np.random.shuffle(ind)
             self.df.index = pd.Int64Index(ind)
