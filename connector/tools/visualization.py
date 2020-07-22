@@ -91,7 +91,7 @@ def draw_rect_items(image_filename,
         else:
             scores = [None] * len(labels)
 
-    for (index, item), label, score in zip(items.iterrows(), labels, scores):
+    for item, label, score in zip(items, labels, scores):
         xmin, ymin, xmax, ymax = item
         width = xmax - xmin
         height = ymax - ymin
@@ -118,9 +118,9 @@ def draw_rect_items(image_filename,
                                       int(bymin + score * height)),
                                   outline=None,
                                   fill=(int(255 * (1 - score)), int(255 * score), 0))
-            t_width, t_height - painter.textsize(text="{score:0.2f".format(score=score))
+            t_width, t_height = painter.textsize(text="{score:0.2f}".format(score=score))
             painter.text(xy=(xmin + border_width + 1, ymax - border_width - t_height + 2),
-                         text="{score:0.2f".format(score=score),
+                         text="{score:0.2f}".format(score=score),
                          fill=(0, 0, 0))
     return img
 
