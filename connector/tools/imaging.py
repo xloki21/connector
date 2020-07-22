@@ -1,7 +1,14 @@
 import os
+from multiprocessing.pool import ThreadPool
+
 import numpy as np
 from PIL import Image
 import concurrent.futures as futures
+
+from connector.tools.dataloader import _MultiWorkerIter
+from connector.tools.sampler import BatchSampler
+
+Image.MAX_IMAGE_PIXELS = None
 
 
 def imwrite(array, filename):
@@ -56,16 +63,8 @@ def create_grid(im_shape, patch_shape, dx, dy, padding=True):
 
 
 def save_image_roi(image, roi, filename):
-    # todo: test
-    width, height = image.size
     xmin, ymin, xmax, ymax = roi
-
-    # if image size lesser than roi size
-    # xmax = np.clip(xmax, a_min=0, a_max=width)
-    # ymax = np.clip(ymax, a_min=0, a_max=height)
-
     patch = image.crop((xmin, ymin, xmax, ymax))
-
     patch.save(filename)
     return patch
 
@@ -113,19 +112,3 @@ def imread_and_mean_and_std(image_filepath):
     img = imread_full(image_filepath)
     img = pil_to_nparray(img).astype(np.float32)
     return np.mean(img, axis=(0, 1)), np.std(img, axis=(0, 1))
-
-
-def concurrent_imread_and_mean(image_filelist, sample_size):
-    means = np.zeros((len(image_filelist), 3), dtype=np.float32)
-    stds = np.zeros((len(image_filelist), 3), dtype=np.float32)
-    with futures.ThreadPoolExecutor(max_workers=sample_size) as executor:
-        future_to_stats = {
-            executor.submit(imread_and_mean_and_std,
-                            image_filepath): image_filepath
-            for image_filepath in image_filelist}
-
-    for idx, future in enumerate(futures.as_completed(future_to_stats)):
-        mean, std = future.result()
-        means[idx, :] = mean
-        stds[idx, :] = std
-    return means.mean(axis=0), stds.mean(axis=0)

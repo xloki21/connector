@@ -1,4 +1,4 @@
-from connector.dataloader import _MultiWorkerIter
+from connector.tools.dataloader import _MultiWorkerIter
 from connector.tools.sampler import BatchSampler
 
 

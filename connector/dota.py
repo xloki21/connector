@@ -10,15 +10,25 @@ from connector.generic import LocalisationDatasetConnector
 from connector.tools.imaging import pil_to_nparray, imread_full
 
 
-class DotaDatasetConnector(LocalisationDatasetConnector):
+class DOTADatasetConnector(LocalisationDatasetConnector):
 
     def __init__(self, dataframe):
         super().__init__(dataframe)
         self.name = 'DOTA'
+        self.default_label_set = ('baseball-diamond', 'basketball-court', 'bridge',
+                                  'container-crane', 'ground-track-field', 'harbor',
+                                  'helicopter', 'large-vehicle', 'plane',
+                                  'roundabout', 'ship', 'small-vehicle',
+                                  'soccer-ball-field', 'storage-tank',
+                                  'swimming-pool', 'tennis-court')
 
     @classmethod
     def init(cls, dataframe=None):
         return cls(dataframe=dataframe)
+
+    @property
+    def obbox(self):
+        return [list(zip(xy[0], xy[1])) for xy in zip(self.df.x, self.df.y)]
 
     @classmethod
     def connect(cls, imagedir, labeldir, rebuild_index=False):
@@ -34,7 +44,7 @@ class DotaDatasetConnector(LocalisationDatasetConnector):
         pandas_sharded_dataframe = glob.glob(labeldir + '/*.shard', recursive=True)
 
         if len(pandas_sharded_dataframe) == 0 or rebuild_index:
-            pandas_sharded_dataframe = path.join(labeldir, 'dataframe.{index:06}.shard')
+            pandas_sharded_dataframe = path.join(labeldir, 'dataset.{index:06}.shard')
             print('log: Набор Файлов с индексом в формате Pandas не найден. Индекс будет перестроен.')
             imfile_list = []
             for mask in ["txt"]:
@@ -107,7 +117,7 @@ class DotaDatasetConnector(LocalisationDatasetConnector):
                        header=None,
                        columns=['x1', 'y1', 'x2', 'y2', 'x3', 'y3', 'x4', 'y4', 'label', 'tag'])
 
-    def collate_fn(self, idx):
+    def collater_fn(self, idx):
         filenames = self.images[idx]
         imgs = []
         annotations = []
