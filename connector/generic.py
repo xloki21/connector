@@ -111,7 +111,10 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
                  "width": 0,
                  "id": 0}
         images = [image] * len(self.images)
-        for i, filename in tqdm.tqdm(enumerate(self.images), desc='loading image information', total=len(self.images)):
+        for i, filename in tqdm.tqdm(enumerate(self.images),
+                                     desc='loading image information',
+                                     total=len(self.images),
+                                     ascii=True):
             imw, imh = imread_lazy(filename).size
             image["file_name"] = filename
             image["height"] = imh
@@ -122,7 +125,10 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
         extended = self.df.copy()
         extended['hbbox'] = self.hbbox
 
-        for i, entry in tqdm.tqdm(extended.iterrows(), total=self.size, desc='converting annotation to COCO format'):
+        for i, entry in tqdm.tqdm(extended.iterrows(),
+                                  total=self.size,
+                                  desc='converting annotation to COCO format',
+                                  ascii=True):
             xmin = entry['hbbox'][0][0]
             ymin = entry['hbbox'][0][1]
             xmax = entry['hbbox'][2][0]
@@ -150,6 +156,22 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
             save_json_data(result, filename=jsonfile)
 
         return result
+
+    def create_csv_format_annotation(self, annotationfile, labelmappingfile):
+        extended = self.df.copy()
+        hbbox = self.hbbox
+
+        extended['xmin'] = hbbox.apply(lambda x: int(x[0][0]))
+        extended['ymin'] = hbbox.apply(lambda x: int(x[0][1]))
+        extended['xmax'] = hbbox.apply(lambda x: int(x[2][0]))
+        extended['ymax'] = hbbox.apply(lambda x: int(x[2][1]))
+
+        extended.to_csv(annotationfile,
+                        header=None, index=None,
+                        columns=['image', 'xmin', 'ymin', 'xmax', 'ymax', 'label'])
+
+        with open(labelmappingfile, 'w') as lf:
+            lf.write("\n".join(["{label},{id}".format(label=label, id=id) for id, label in enumerate(self.labels)]))
 
     @classmethod
     @abstractmethod
@@ -237,12 +259,15 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
 
         return self.init(dataframe=local_df.loc[idx])
 
-    def convert(self, patch_shape, imagedir, labeldir, rel_shift=1.0, padding=True):
+    def convert(self, patch_shape, imagedir, labeldir, rel_shift=1.0, padding=True, max_workers=None):
         if not os.path.exists(labeldir):
             os.makedirs(labeldir, exist_ok=True)
 
         if not os.path.exists(imagedir):
             os.makedirs(imagedir, exist_ok=True)
+
+        if max_workers is None:
+            max_workers = os.cpu_count()
 
         images = self.images
 
@@ -260,7 +285,7 @@ class LocalisationDatasetConnector(DataFrameCommonOpsMixin):
                                                   patch_root_dir=imagedir,
                                                   ext=ext,
                                                   padding=padding,
-                                                  max_workers=8)
+                                                  max_workers=max_workers)
             image_annotation = self.select_images(imgname)
             for roi in zip(xmin, ymin, xmax, ymax):
                 roi_annotation = image_annotation.select_roi(roi=roi)
